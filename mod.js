@@ -1,4 +1,4 @@
-import {validator} from "@hono/hono/validator";
+import {validator} from "jsr:@hono/hono/validator";
 
 // Common string patterns:
 export const patterns = {
