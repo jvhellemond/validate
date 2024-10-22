@@ -5,7 +5,7 @@ Validation middleware for use with the Hono framework.
 
 ## Usage
 
-```
+```js
 import {Hono} from "@hono/hono";
 import validate, {Schema as µ} from "@jvhellemond/validate";
 

@@ -1,6 +1,6 @@
 import {validator} from "jsr:@hono/hono@^4/validator";
 
-// Common string patterns:
+/** Some common regular expression patterns: */
 export const patterns = {
 	uuid:        /^[a-f0-9]{8}-([a-f0-9]{4}-){3}[a-f0-9]{12}$/,
 	slug:        /^[a-z0-9]+(?:-[a-z0-9]+)*$/, // Contains only alphanumerics or non-consecutive hyphens, but may not start or end with a hyphen.
@@ -9,7 +9,7 @@ export const patterns = {
 	countryCode: /^[a-z]{2}$/, // ISO 3166-1 alpha-2
 };
 
-// Utility functions:
+/** Some utility functions: */
 const	isString =  value => Object(value) instanceof String;
 const	isNumber =  value => Object(value) instanceof Number;
 const	isDate =    value => Object(value) instanceof Date;
@@ -18,14 +18,14 @@ const	isRegExp =  value => Object(value) instanceof RegExp;
 const	isArray =   value => Array.isArray(value);
 const	isObject =  value => value?.constructor === Object;
 
-// Generic validation exception class:
+/** A generic validation exception class: */
 export class ValidationException extends Error {
 	constructor(key, messages) {
 		super(messages.map(([path, message]) => `\`${[key, ...path].join(".")}\` ${message}`).join("\n"));
 	}
 }
 
-// Hono validator function:
+/** Hono validator middleware, exported as default: */
 export default function (key, ruleset) {
 	const schema = isObject(ruleset) ? Schema.isObject(ruleset) : (isArray(ruleset) ? Schema.isArray(ruleset) : ruleset);
 	if(!(schema instanceof Schema)) {
@@ -42,6 +42,7 @@ export default function (key, ruleset) {
 	});
 }
 
+/** A validation schema class: */
 export class Schema {
 
 	// Shorthand static getters and methods:
@@ -199,7 +200,7 @@ export class Schema {
 	hasAtMost(max)       { return this.setRules({size: [-Infinity, max]}); }
 	hasBetween(min, max) { return this.setRules({size: [min, max]}); }
 
-	// Validation:
+	/** A validation method, applying all validation rules and returning the value's validity and, if invalid, error messages: */
 	validate(value, rules=this.rules, path=[]) {
 
 		const error = message => [false, [[path.map(key => key.replace(/\.([0-9]+)(?=\.|$)/g, "[$1]")), message]]];
@@ -409,7 +410,7 @@ export class Schema {
 
 	}
 
-	// Check validation rules:
+	/** A method to check the integrity of a validation schema: */
 	check() {
 		const µ = this.constructor;
 		return µ.isObject({
