@@ -3,9 +3,9 @@ import {validator} from "jsr:@hono/hono@^4/validator";
 /** Some common regular expression patterns: */
 export const patterns = {
 	uuid:        /^[a-f0-9]{8}-([a-f0-9]{4}-){3}[a-f0-9]{12}$/,
-	slug:        /^[a-z0-9]+(?:-[a-z0-9]+)*$/, // Contains only alphanumerics or non-consecutive hyphens, but may not start or end with a hyphen.
+	slug:        /^[a-z0-9]+(?:-[a-z0-9]+)*$/i, // Contains only alphanumerics or non-consecutive hyphens, but may not start or end with a hyphen.
 	email:       /^[a-z0-9_!#$%&'*+\/=?`{|}~^.-]+@[a-z0-9.-]+\.[a-z]{2,}$/i, // Inspired by https://www.abstractapi.com/guides/email-validation-regex-javascript
-	social:      /^[a-z]{1,10}:.{1,50}$/, // "mastodon:@jvhellemond@mastodon.social"
+	social:      /^[a-z]{1,10}:.{1,50}$/i, // "mastodon:@jvhellemond@mastodon.social"
 	countryCode: /^[a-z]{2}$/, // ISO 3166-1 alpha-2
 };
 
@@ -57,6 +57,8 @@ export class Schema {
 
 	static is(...args)      { return new this().is(...args); }
 	static isAnyOf(...args) { return new this().isAnyOf(...args); }
+
+	static isEither(...args) { return new this().isEither(...args); }
 
 	static get isString()      { return new this().isString; }
 	static get isUUID()        { return new this().isUUID; }
@@ -220,6 +222,7 @@ export class Schema {
 		}
 
 		// Union rule:
+		// @todo: Short-circuit this?
 		if(rules.union.length) {
 			const results = rules.union.map(rules_ => this.validate(value, {...rules, ...rules_, union: []}, path));
 			return results.reduce(
