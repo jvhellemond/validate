@@ -31,14 +31,14 @@ export default function (key, ruleset) {
 	if(!(schema instanceof Schema)) {
 		throw new TypeError("Ruleset is not an array, object or instance of Schema.");
 	}
-	return validator(key, values => {
-		const [valid, messages] = schema.validate(values);
+	return validator(key, value => {
+		const [valid, messages, value_] = schema.validate(value);
 		if(!valid) {
 			const error = new ValidationException(key, messages);
 			error.status = 400; // Trigger a specific HTTP response from Hono.
 			throw error;
 		}
-		return values;
+		return value_;
 	});
 }
 
@@ -53,7 +53,7 @@ export class Schema {
 	static get isNotNull() { return new this().isNotNull; }
 	static get mayBeNull() { return new this().mayBeNull; }
 
-	static coerce(...args) { return new this().coerce(...args); }
+	static coerce(...args)  { return new this().coerce(...args); }
 
 	static is(...args)      { return new this().is(...args); }
 	static isAnyOf(...args) { return new this().isAnyOf(...args); }
@@ -97,7 +97,7 @@ export class Schema {
 	static hasAtMost(...args)  { return new this().hasAtMost(...args); }
 	static hasBetween(...args) { return new this().hasBetween(...args); }
 
-	rules = {required: true, null: false, coerce: [], values: [], union: [], type: "string"};
+	rules = {required: true, null: false, coercers: [], values: [], either: [], type: "string"};
 
 	setRules(rules) {
 		this.rules = {...this.rules, ...rules};
@@ -105,20 +105,19 @@ export class Schema {
 	}
 
 	// Shortcut rules:
-
 	get isRequired() { return this.setRules({required: true}); }
 	get isOptional() { return this.setRules({required: false}); }
 
 	get isNotNull() { return this.setRules({null: false}); }
 	get mayBeNull() { return this.setRules({null: true}); }
 
-	coerce(...coercers) { return this.setRules({coerce: coercers}); }
+	coerce(coercers, default_) { return this.setRules({coercers: [coercers].flat(), default_}); }
 
 	is(value)          { return this.setRules({values: [value]}); }
 	isAnyOf(...values) { return this.setRules({values}); }
 
-	// Union rule:
-	isEither(...schemas) { return this.setRules({union: schemas.map(schema => schema.rules)}); }
+	// Either rule:
+	isEither(...schemas) { return this.setRules({either: schemas.map(schema => schema.rules)}); }
 
 	// String rules:
 
@@ -205,30 +204,37 @@ export class Schema {
 	/** A validation method, applying all validation rules and returning the value's validity and, if invalid, error messages: */
 	validate(value, rules=this.rules, path=[]) {
 
-		const error = message => [false, [[path.map(key => key.replace(/\.([0-9]+)(?=\.|$)/g, "[$1]")), message]]];
+		const success = () => [true, [], value];
+		const failure = message => [false, [[path.map(key => key.replace(/\.([0-9]+)(?=\.|$)/g, "[$1]")), message]], value];
+
+		// Coerce rule:
+		if(rules.coercers.length) {
+			if(value != null) {
+				value = rules.coercers.reduce((value_, coercer) => coercer(value_), value);
+			}
+			else if(rules.default_ != null) {
+				value = rules.default_;
+			}
+		}
 
 		// Shortcut rules:
-		if(value === undefined) { return rules.required ? error("is undefined.") : [true, []]; }
-		if(value === null)      { return !rules.null ? error("is null.") : [true, []]; }
-
-		// Value coercion:
-		if(rules.coerce.length) {
-			value = rules.coerce.reduce((value_, coercer) => coercer(value_), value);
-		}
+		if(value === undefined) { return !rules.required ? success() : failure("is undefined."); }
+		if(value === null)      { return rules.null      ? success() : failure("is null."); }
 
 		// Values rule:
 		if(rules.values.length) {
-			return !rules.values.includes(value) ? error("does not equal any required value.") : [true, []];
+			return rules.values.includes(value) ? success() : failure("does not equal any required value.");
 		}
 
-		// Union rule:
-		// @todo: Short-circuit this?
-		if(rules.union.length) {
-			const results = rules.union.map(rules_ => this.validate(value, {...rules, ...rules_, union: []}, path));
-			return results.reduce(
-				([valid_, messages_], [valid__, messages__]) => [valid_ || valid__, [...messages_, ...messages__]],
-				[false, []]
-			);
+		// Either rule:
+		if(rules.either.length) {
+			for(const rules_ of rules.either) {
+				const result = this.validate(value, {...rules_, either: []}, path);
+				if(result[0]) {
+					return result;
+				}
+			}
+			return failure("is not valid for any schema.");
 		}
 
 		// Type rules:
@@ -238,22 +244,22 @@ export class Schema {
 			case "string":
 
 				// String type:
-				if(!isString(value)) { return error("is not a string."); }
+				if(!isString(value)) { return failure("is not a string."); }
 
 				// String length:
 				if(isNumber(rules.length) && value.length != rules.length) {
-					return error(`length is not ${rules.length}.`);
+					return failure(`length is not ${rules.length}.`);
 				}
 				if(isArray(rules.length)) {
 					const [min, max] = rules.length;
-					if(value.length < min) { return error(`is shorter than ${min} characters.`); }
-					if(value.length > max) { return error(`is longer than ${max} characters.`); }
+					if(value.length < min) { return failure(`is shorter than ${min} characters.`); }
+					if(value.length > max) { return failure(`is longer than ${max} characters.`); }
 				}
 
 				// String pattern:
 				if(isRegExp(rules.pattern) && !rules.pattern.test(value)) {
 					const [key] = Object.entries(patterns).find(([_, pattern]) => pattern == rules.pattern);
-					return error(`does not match the pattern \`${key || rules.pattern}\`.`);
+					return failure(`does not match the pattern \`${key || rules.pattern}\`.`);
 				}
 
 				break;
@@ -261,14 +267,14 @@ export class Schema {
 			case "number":
 
 				// Number type:
-				if(!isNumber(value))               { return error("is not a number"); }
-				if(rules.integer && !!(value % 1)) { return error("is not an integer"); }
+				if(!isNumber(value))               { return failure("is not a number"); }
+				if(rules.integer && !!(value % 1)) { return failure("is not an integer"); }
 
 				// Number range:
 				if(isArray(rules.range)) {
 					const [min, max] = rules.range;
-					if(isNumber(min) && value < min) { return error(`is less than ${min}.`); }
-					if(isNumber(max) && value > max) { return error(`is greater than ${max}.`); }
+					if(isNumber(min) && value < min) { return failure(`is less than ${min}.`); }
+					if(isNumber(max) && value > max) { return failure(`is greater than ${max}.`); }
 				}
 
 				break;
@@ -276,13 +282,13 @@ export class Schema {
 			case "date":
 
 				// Date type:
-				if(!isDate(value)) { return error("is not a date."); }
+				if(!isDate(value)) { return failure("is not a date."); }
 
 				// Date range:
 				if(isArray(rules.range)) {
 					const [min, max] = rules.range;
-					if(isDate(min) && value < min) { return error(`is before ${min}.`); }
-					if(isDate(max) && value > max) { return error(`is after ${max}.`); }
+					if(isDate(min) && value < min) { return failure(`is before ${min}.`); }
+					if(isDate(max) && value > max) { return failure(`is after ${max}.`); }
 				}
 
 				break;
@@ -290,29 +296,29 @@ export class Schema {
 			case "boolean":
 
 				// Boolean type:
-				if(!isBoolean(value)) { return error("is not a boolean."); }
+				if(!isBoolean(value)) { return failure("is not a boolean."); }
 				break;
 
 			case "regexp":
 
 				// RegExp type:
-				if(!isRegExp(value)) { return error("is not a regular expression."); }
+				if(!isRegExp(value)) { return failure("is not a regular expression."); }
 				break;
 
 			case "object": {
 
 				// Object type:
-				if(!isObject(value)) { return error("is not an object."); }
+				if(!isObject(value)) { return failure("is not an object."); }
 
 				// Object size:
 				const size = Object.keys(value).length;
 				if(isNumber(rules.size) && size != rules.size) {
-					return error(`does not have exactly ${rules.size} ${rules.size == 1 ? "property" : "properties"}.`);
+					return failure(`does not have exactly ${rules.size} ${rules.size == 1 ? "property" : "properties"}.`);
 				}
 				if(isArray(rules.size)) {
 					const [min, max] = rules.size;
-					if(size < min) { return error(`has fewer than ${min} properties.`); }
-					if(size > max) { return error(`has more than ${max} properties.`); }
+					if(size < min) { return failure(`has fewer than ${min} properties.`); }
+					if(size > max) { return failure(`has more than ${max} properties.`); }
 				}
 
 				// Object properties:
@@ -323,26 +329,39 @@ export class Schema {
 						(rules.props.__keys__ == null && rules.props.__values__ == null)
 						&& !(new Set(Object.keys(rules.props))).isSupersetOf(new Set(Object.keys(value)))
 					) {
-						return error("contains unspecified properties.");
+						return failure("contains unspecified properties.");
 					}
 
 					// Validate all named property values:
 					const results = Object.entries(rules.props).map(
-						([key, rules_]) => this.validate(value[key], rules_, [...path, key])
+						([key, rules_]) => {
+							const [valid, messages, value_] = this.validate(value[key], rules_, [...path, key]);
+							value[key] = value_;
+							return [valid, messages, value_];
+						}
 					);
 
 					// Validate any unnamed property keys:
 					isObject(rules.props.__keys__) && results.push(
 						...Object.entries(value)
 						.filter(([key]) => !(key in rules.props))
-						.map(([key]) => this.validate(key, rules.props.__keys__, [...path, `${key}*`]))
+						.map(([key]) => {
+							const [valid, messages, key_] = this.validate(key, rules.props.__keys__, [...path, `${key}*`]);
+							value[key_] = value[key];
+							delete value[key];
+							return [valid, messages, value_];
+						})
 					);
 
 					// Validate any unnamed property values:
 					isObject(rules.props.__values__) && results.push(
 						...Object.entries(value)
 						.filter(([key]) => !(key in rules.props))
-						.map(([key, value_]) => this.validate(value_, rules.props.__values__, [...path, key]))
+						.map(([key, value_]) => {
+							const [valid, messages, value__] = this.validate(value_, rules.props.__values__, [...path, key]);
+							value[key] = value__;
+							return [valid, messages, value__];
+						})
 					);
 
 					const [valid, messages] = results.reduce(
@@ -350,7 +369,7 @@ export class Schema {
 						[true, []]
 					);
 					if(!valid) {
-						return [false, messages];
+						return [false, messages, value];
 					}
 
 				}
@@ -362,16 +381,16 @@ export class Schema {
 			case "array":
 
 				// Array type:
-				if(!isArray(value)) { return error("is not an array."); }
+				if(!isArray(value)) { return failure("is not an array."); }
 
 				// Array size (length):
 				if(isNumber(rules.size) && value.length != rules.size) {
-					return error(`does not have exactly ${rules.size} ${rules.size == 1 ? "item" : "items"}.`);
+					return failure(`does not have exactly ${rules.size} ${rules.size == 1 ? "item" : "items"}.`);
 				}
 				if(isArray(rules.size)) {
 					const [min, max] = rules.size;
-					if(value.length < min) { return error(`has fewer than ${min} items.`); }
-					if(value.length > max) { return error(`has more than ${max} items.`); }
+					if(value.length < min) { return failure(`has fewer than ${min} items.`); }
+					if(value.length > max) { return failure(`has more than ${max} items.`); }
 				}
 
 				// Array items:
@@ -379,18 +398,27 @@ export class Schema {
 
 					// Disallow additional items, unless rules.props has __values__:
 					if(rules.props.__values__ == null && value.length > Object.keys(rules.props).length) {
-						return error("contains unspecified items.");
+						return failure("contains unspecified items.");
 					}
 
 					// Validate all named item values:
 					const results = Object.entries(rules.props).map(
-						([key, rules_]) => this.validate(value[key], rules_, [...path, key])
+						([key, rules_]) => {
+							const [valid, messages, value_] = this.validate(value[key], rules_, [...path, key]);
+							value[key] = value_;
+							return [valid, messages, value_];
+						}
 					);
 
-					// Validate any additional item values:
+					// Validate any unnamed item values:
 					isObject(rules.props.__values__) && results.push(
 						...value.map((value_, i) => {
-							return !(i in rules.props) ? this.validate(value_, rules.props.__values__, [...path, i]) : undefined;
+							if(!(i in rules.props)) {
+								return;
+							}
+							const [valid, messages, value__] = this.validate(value_, rules.props.__values__, [...path, i]);
+							value[i] = value__;
+							return [valid, messages, value__];
 						})
 						.filter(Boolean)
 					);
@@ -400,7 +428,7 @@ export class Schema {
 						[true, []]
 					);
 					if(!valid) {
-						return [false, messages];
+						return [false, messages, value];
 					}
 
 				}
@@ -409,7 +437,7 @@ export class Schema {
 
 		}
 
-		return [true, []];
+		return success();
 
 	}
 
@@ -419,9 +447,9 @@ export class Schema {
 		return µ.isObject({
 			required: µ.isBoolean,
 			null:     µ.isBoolean,
-			coerce:   µ.isArray,
+			coercers: µ.isArray,
 			values:   µ.isArray().hasAtLeast(1),
-			union:    µ.isArray().hasAtLeast(2),
+			either:   µ.isArray().hasAtLeast(2),
 			type:     µ.isAnyOf("string", "number", "date", "boolean", "regexp", "object", "array"),
 			length:   µ.isOptional.isEither(µ.isInteger, µ.isArray({0: µ.isInteger, 1: µ.isInteger}).hasExactly(2)),
 			pattern:  µ.isOptional.isRegExp,
