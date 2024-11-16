@@ -336,7 +336,7 @@ export class Schema {
 					const results = Object.entries(rules.props).map(
 						([key, rules_]) => {
 							const [valid, messages, value_] = this.validate(value[key], rules_, [...path, key]);
-							value[key] = value_;
+							key in value && (value[key] = value_);
 							return [valid, messages, value_];
 						}
 					);
@@ -359,7 +359,7 @@ export class Schema {
 						.filter(([key]) => !(key in rules.props))
 						.map(([key, value_]) => {
 							const [valid, messages, value__] = this.validate(value_, rules.props.__values__, [...path, key]);
-							value[key] = value__;
+							key in value && (value[key] = value__);
 							return [valid, messages, value__];
 						})
 					);
@@ -405,7 +405,7 @@ export class Schema {
 					const results = Object.entries(rules.props).map(
 						([key, rules_]) => {
 							const [valid, messages, value_] = this.validate(value[key], rules_, [...path, key]);
-							value[key] = value_;
+							key in value && (value[key] = value_);
 							return [valid, messages, value_];
 						}
 					);
@@ -417,7 +417,7 @@ export class Schema {
 								return;
 							}
 							const [valid, messages, value__] = this.validate(value_, rules.props.__values__, [...path, i]);
-							value[i] = value__;
+							i in value && (value[i] = value__);
 							return [valid, messages, value__];
 						})
 						.filter(Boolean)
