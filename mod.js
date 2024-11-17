@@ -349,7 +349,7 @@ export class Schema {
 							const [valid, messages, key_] = this.validate(key, rules.props.__keys__, [...path, `${key}*`]);
 							value[key_] = value[key];
 							delete value[key];
-							§return [valid, messages];
+							return [valid, messages];
 						})
 					);
 
