@@ -237,6 +237,8 @@ export class Schema {
 			return failure("is not valid for any schema.");
 		}
 
+		console.log("\n----------", path.join("."), "----------");
+
 		// Type rules:
 
 		switch(rules.type) {
@@ -332,44 +334,38 @@ export class Schema {
 						return failure("contains unspecified properties.");
 					}
 
+					const failures = [];
+
 					// Validate all named property values:
-					const results = Object.entries(rules.props).map(
-						([key, rules_]) => {
-							const [valid, messages, value_] = this.validate(value[key], rules_, [...path, key]);
-							key in value && (value[key] = value_);
-							return [valid, messages];
-						}
-					);
+					for(const [key, rules_] of Object.entries(rules.props)) {
+						const [valid, message, value_] = this.validate(value[key], rules_, [...path, key]);
+						!valid && failures.push(message);
+						key in value && (value[key] = value_);
+					};
 
 					// Validate any unnamed property keys:
-					isObject(rules.props.__keys__) && results.push(
-						...Object.entries(value)
-						.filter(([key]) => !(key in rules.props))
-						.map(([key]) => {
-							const [valid, messages, key_] = this.validate(key, rules.props.__keys__, [...path, `${key}*`]);
-							value[key_] = value[key];
-							delete value[key];
-							return [valid, messages];
-						})
-					);
+					if(isObject(rules.props.__keys__)) {
+						for(const [key] of Object.entries(value).filter(([key]) => !(key in rules.props))) {
+							const [valid, message, key_] = this.validate(key, rules.props.__keys__, [...path, `${key}*`]);
+							!valid && failures.push(message);
+							if(key != key_) {
+								value[key_] = value[key];
+								delete value[key];
+							}
+						}
+					}
 
 					// Validate any unnamed property values:
-					isObject(rules.props.__values__) && results.push(
-						...Object.entries(value)
-						.filter(([key]) => !(key in rules.props))
-						.map(([key, value_]) => {
-							const [valid, messages, value__] = this.validate(value_, rules.props.__values__, [...path, key]);
-							key in value && (value[key] = value__);
-							return [valid, messages];
-						})
-					);
+					if(isObject(rules.props.__values__)) {
+						for(const [key, value_] of Object.entries(value).filter(([key]) => !(key in rules.props))) {
+							const [valid, message, value__] = this.validate(value_, rules.props.__values__, [...path, key]);
+							!valid && failures.push(message);
+							value[key] = value__;
+						}
+					}
 
-					const [valid, messages] = results.reduce(
-						([valid_, messages_], [valid__, messages__]) => [valid_ && valid__, [...messages_, ...messages__]],
-						[true, []]
-					);
-					if(!valid) {
-						return [false, messages, value];
+					if(failures.length) {
+						return [false, failures, value];
 					}
 
 				}
@@ -401,34 +397,26 @@ export class Schema {
 						return failure("contains unspecified items.");
 					}
 
+					const failures = [];
+
 					// Validate all named item values:
-					const results = Object.entries(rules.props).map(
-						([key, rules_]) => {
-							const [valid, messages, value_] = this.validate(value[key], rules_, [...path, key]);
-							key in value && (value[key] = value_);
-							return [valid, messages, value_];
-						}
-					);
+					for(const [key, rules_] of Object.entries(rules.props)) {
+						const [valid, message, value_] = this.validate(value[key], rules_, [...path, key]);
+						!valid && failures.push(message);
+						key in value && (value[key] = value_);
+					};
 
 					// Validate any unnamed item values:
-					isObject(rules.props.__values__) && results.push(
-						...value.map((value_, i) => {
-							if(!(i in rules.props)) {
-								return;
-							}
-							const [valid, messages, value__] = this.validate(value_, rules.props.__values__, [...path, i]);
-							i in value && (value[i] = value__);
-							return [valid, messages, value__];
-						})
-						.filter(Boolean)
-					);
+					if(isObject(rules.props.__values__)) {
+						for(const [key, value_] of Object.entries(value).filter(([key]) => !(key in rules.props))) {
+							const [valid, message, value__] = this.validate(value_, rules.props.__values__, [...path, key]);
+							!valid && failures.push(message);
+							value[key] = value__;
+						}
+					}
 
-					const [valid, messages] = results.reduce(
-						([valid_, messages_], [valid__, messages__]) => [valid_ && valid__, [...messages_, ...messages__]],
-						[true, []]
-					);
-					if(!valid) {
-						return [false, messages, value];
+					if(failures.length) {
+						return [false, failures, value];
 					}
 
 				}
