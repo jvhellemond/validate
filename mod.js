@@ -237,8 +237,6 @@ export class Schema {
 			return failure("is not valid for any schema.");
 		}
 
-		console.log("\n----------", path.join("."), "----------");
-
 		// Type rules:
 
 		switch(rules.type) {
