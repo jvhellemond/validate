@@ -18,10 +18,10 @@ const	isRegExp =  value => Object(value) instanceof RegExp;
 const	isArray =   value => Array.isArray(value);
 const	isObject =  value => value?.constructor === Object;
 
-/** A generic validation exception class: */
-export class ValidationException extends Error {
-	constructor(key, messages) {
-		super(messages.map(([path, message]) => `\`${[key, ...path].join(".")}\` ${message}`).join("\n"));
+/** A generic validation error class: */
+export class ValidationError extends Error {
+	constructor(path, message) {
+		super(`\`${path.join(".").replace(/\.([0-9]+)/g, "[$1]")}\` ${message}`);
 	}
 }
 
@@ -32,13 +32,13 @@ export default function (key, ruleset) {
 		throw new TypeError("Ruleset is not an array, object or instance of Schema.");
 	}
 	return validator(key, value => {
-		const [valid, messages, value_] = schema.validate(value);
-		if(!valid) {
-			const error = new ValidationException(key, messages);
-			error.status = 400; // Trigger a specific HTTP response from Hono.
+		try {
+			return schema.validate(value, undefined, [key]);
+		}
+		catch(error) {
+			error.status = 400; // Triggers a specific HTTP response from Hono.
 			throw error;
 		}
-		return value_;
 	});
 }
 
@@ -60,10 +60,10 @@ export class Schema {
 
 	static isEither(...args) { return new this().isEither(...args); }
 
-	static get isString()      { return new this().isString; }
-	static get isUUID()        { return new this().isUUID; }
-	static get isSlug()        { return new this().isSlug; }
-	static get isEmail()       { return new this().isEmail; }
+	static get isString() { return new this().isString; }
+	static get isUUID()   { return new this().isUUID; }
+	static get isSlug()   { return new this().isSlug; }
+	static get isEmail()  { return new this().isEmail; }
 
 	static get hasLength()          { return new this().hasLength; }
 	static lengthIsAtLeast(...args) { return new this().lengthIsAtLeast(...args); }
@@ -204,8 +204,9 @@ export class Schema {
 	/** A validation method, applying all validation rules and returning the value's validity and, if invalid, error messages: */
 	validate(value, rules=this.rules, path=[]) {
 
-		const success = () => [true, [], value];
-		const failure = message => [false, [[path.map(key => key.replace(/\.([0-9]+)(?=\.|$)/g, "[$1]")), message]], value];
+		const failure = message => {
+			throw new ValidationError(path, message);
+		};
 
 		// Coerce rule:
 		if(rules.coercers.length) {
@@ -218,20 +219,22 @@ export class Schema {
 		}
 
 		// Shortcut rules:
-		if(value === undefined) { return !rules.required ? success() : failure("is undefined."); }
-		if(value === null)      { return rules.null      ? success() : failure("is null."); }
+		if(value === undefined) { return !rules.required ? value : failure("is undefined."); }
+		if(value === null)      { return rules.null      ? value : failure("is null."); }
 
 		// Values rule:
 		if(rules.values.length) {
-			return rules.values.includes(value) ? success() : failure("does not equal any required value.");
+			return rules.values.includes(value) ? value : failure("does not equal any required value.");
 		}
 
 		// Either rule:
 		if(rules.either.length) {
 			for(const rules_ of rules.either) {
-				const result = this.validate(value, {...rules_, either: []}, path);
-				if(result[0]) {
-					return result;
+				try {
+					return this.validate(value, {...rules_, either: []}, path);
+				}
+				catch(_error) {
+					// Fail silently.
 				}
 			}
 			return failure("is not valid for any schema.");
@@ -332,20 +335,16 @@ export class Schema {
 						return failure("contains unspecified properties.");
 					}
 
-					const failures = [];
-
 					// Validate all named property values:
 					for(const [key, rules_] of Object.entries(rules.props)) {
-						const [valid, message, value_] = this.validate(value[key], rules_, [...path, key]);
-						!valid && failures.push(message);
+						const value_ = this.validate(value[key], rules_, [...path, key]);
 						key in value && (value[key] = value_);
 					};
 
 					// Validate any unnamed property keys:
 					if(isObject(rules.props.__keys__)) {
 						for(const [key] of Object.entries(value).filter(([key]) => !(key in rules.props))) {
-							const [valid, message, key_] = this.validate(key, rules.props.__keys__, [...path, `${key}*`]);
-							!valid && failures.push(message);
+							const key_ = this.validate(key, rules.props.__keys__, [...path, `${key}*`]);
 							if(key != key_) {
 								value[key_] = value[key];
 								delete value[key];
@@ -356,14 +355,9 @@ export class Schema {
 					// Validate any unnamed property values:
 					if(isObject(rules.props.__values__)) {
 						for(const [key, value_] of Object.entries(value).filter(([key]) => !(key in rules.props))) {
-							const [valid, message, value__] = this.validate(value_, rules.props.__values__, [...path, key]);
-							!valid && failures.push(message);
+							const value__ = this.validate(value_, rules.props.__values__, [...path, key]);
 							value[key] = value__;
 						}
-					}
-
-					if(failures.length) {
-						return [false, failures, value];
 					}
 
 				}
@@ -395,26 +389,18 @@ export class Schema {
 						return failure("contains unspecified items.");
 					}
 
-					const failures = [];
-
 					// Validate all named item values:
 					for(const [key, rules_] of Object.entries(rules.props)) {
-						const [valid, message, value_] = this.validate(value[key], rules_, [...path, key]);
-						!valid && failures.push(message);
+						const value_ = this.validate(value[key], rules_, [...path, key]);
 						key in value && (value[key] = value_);
 					};
 
 					// Validate any unnamed item values:
 					if(isObject(rules.props.__values__)) {
 						for(const [key, value_] of Object.entries(value).filter(([key]) => !(key in rules.props))) {
-							const [valid, message, value__] = this.validate(value_, rules.props.__values__, [...path, key]);
-							!valid && failures.push(message);
+							const value__ = this.validate(value_, rules.props.__values__, [...path, key]);
 							value[key] = value__;
 						}
-					}
-
-					if(failures.length) {
-						return [false, failures, value];
 					}
 
 				}
@@ -423,7 +409,7 @@ export class Schema {
 
 		}
 
-		return success();
+		return value;
 
 	}
 
