@@ -345,7 +345,7 @@ export class Schema {
 					isObject(rules.props.__keys__) && results.push(
 						...Object.entries(value)
 						.filter(([key]) => !(key in rules.props))
-						.forEach(([key]) => {
+						.map(([key]) => {
 							const [valid, messages, key_] = this.validate(key, rules.props.__keys__, [...path, `${key}*`]);
 							value[key_] = value[key];
 							delete value[key];
